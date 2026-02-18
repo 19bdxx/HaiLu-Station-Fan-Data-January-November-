@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 三台风机全量数据分析脚本
-Wind Turbine Data Analysis Script for Three Turbines (Jan-Nov 2023)
+2023年1-11月三台风机数据分析
 """
 
 import pandas as pd
