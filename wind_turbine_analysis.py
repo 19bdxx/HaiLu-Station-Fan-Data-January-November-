@@ -22,6 +22,15 @@ plt.rcParams['axes.unicode_minus'] = False
 class WindTurbineAnalyzer:
     """风机数据分析器"""
     
+    # 分析参数常量
+    RATED_POWER = 2500  # 额定功率 (kW)
+    MAX_EXPECTED_POWER = 3000  # 最大期望功率 (kW)
+    OPERATING_THRESHOLD = 50  # 运行状态判定阈值 (kW)
+    HIGH_WIND_THRESHOLD = 5  # 高风速阈值 (m/s)
+    LOW_POWER_THRESHOLD = 100  # 低功率阈值 (kW)
+    LOW_EFFICIENCY_QUANTILE = 0.1  # 低效运行分位数阈值
+    POWER_CHANGE_THRESHOLD = 1000  # 功率突变阈值 (kW)
+    
     def __init__(self, data_dir='.'):
         self.data_dir = data_dir
         self.turbines = {}
@@ -71,7 +80,7 @@ class WindTurbineAnalyzer:
                 # 统计异常值（负功率或异常大的功率）
                 valid_power = df[power_col].notna()
                 negative_power = (df[power_col] < 0).sum()
-                abnormal_high = (df[power_col] > 3000).sum()  # 假设额定功率2.5MW左右
+                abnormal_high = (df[power_col] > self.MAX_EXPECTED_POWER).sum()  # 使用常量
                 
                 cleaning_stats[turbine_id] = {
                     '总记录数': original_count,
@@ -81,7 +90,9 @@ class WindTurbineAnalyzer:
                     '有效数据率': f"{(valid_power.sum() / len(df) * 100):.2f}%"
                 }
             
-            # 填充缺失值（使用前向填充）
+            # 填充缺失值（使用前向填充和后向填充）
+            # 注意：这种方法假设数据是连续的，适用于短暂的数据采集中断
+            # 对于长时间停机或传感器故障，应在异常检测中单独处理
             df_cleaned = df.ffill().bfill()
             self.turbines[turbine_id] = df_cleaned
         
@@ -102,26 +113,25 @@ class WindTurbineAnalyzer:
                 # 计算发电量 (kWh) - 每10分钟采样
                 total_energy = df[power_col].sum() * (10/60)  # 转换为小时
                 
-                # 运行时长（功率>0的时间）
-                operating_hours = (df[power_col] > 50).sum() * (10/60)
+                # 运行时长（功率>阈值的时间）
+                operating_hours = (df[power_col] > self.OPERATING_THRESHOLD).sum() * (10/60)
                 
                 # 平均功率
                 avg_power = df[power_col].mean()
                 max_power = df[power_col].max()
                 
-                # 利用小时数（假设额定功率2500kW）
-                rated_power = 2500
-                utilization_hours = total_energy / rated_power
+                # 利用小时数（基于额定功率）
+                utilization_hours = total_energy / self.RATED_POWER
                 
-                # 容量系数
+                # 容量系数（实际发电量与理论最大发电量的比值）
                 total_hours = len(df) * (10/60)
-                capacity_factor = (avg_power / rated_power * 100) if rated_power > 0 else 0
+                capacity_factor = (total_energy / (self.RATED_POWER * total_hours) * 100) if total_hours > 0 else 0
                 
                 # 风速统计
                 avg_wind_speed = df[wind_speed_col].mean() if wind_speed_col in df.columns else 0
                 
-                # 停机时长（功率接近0的时间）
-                downtime_hours = (df[power_col] < 50).sum() * (10/60)
+                # 停机时长（功率低于阈值的时间）
+                downtime_hours = (df[power_col] < self.OPERATING_THRESHOLD).sum() * (10/60)
                 
                 stats[turbine_id] = {
                     '总发电量(MWh)': total_energy / 1000,
@@ -155,7 +165,7 @@ class WindTurbineAnalyzer:
             
             if power_col in df.columns and wind_speed_col in df.columns:
                 # 检测异常停机（风速高但功率低）
-                high_wind_low_power = (df[wind_speed_col] > 5) & (df[power_col] < 100)
+                high_wind_low_power = (df[wind_speed_col] > self.HIGH_WIND_THRESHOLD) & (df[power_col] < self.LOW_POWER_THRESHOLD)
                 if high_wind_low_power.sum() > 0:
                     anomaly_times = df[high_wind_low_power]['统计时间'].tolist()
                     turbine_anomalies['异常停机'] = anomaly_times[:10]  # 仅记录前10个
@@ -164,7 +174,7 @@ class WindTurbineAnalyzer:
                 # 理论功率系数 = 实际功率 / (0.5 * 空气密度 * 扫风面积 * 风速^3)
                 # 简化判断：在相同风速下，功率明显偏低
                 df['效率指标'] = df[power_col] / (df[wind_speed_col] ** 2 + 1)
-                efficiency_threshold = df['效率指标'].quantile(0.1)
+                efficiency_threshold = df['效率指标'].quantile(self.LOW_EFFICIENCY_QUANTILE)
                 low_efficiency = df['效率指标'] < efficiency_threshold
                 
                 if low_efficiency.sum() > 0:
@@ -173,7 +183,7 @@ class WindTurbineAnalyzer:
                 
                 # 检测数据异常（功率突变）
                 df['功率变化'] = df[power_col].diff().abs()
-                sudden_changes = df['功率变化'] > 1000  # 10分钟内变化超过1000kW
+                sudden_changes = df['功率变化'] > self.POWER_CHANGE_THRESHOLD  # 使用常量
                 
                 if sudden_changes.sum() > 0:
                     change_times = df[sudden_changes]['统计时间'].tolist()
