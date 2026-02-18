@@ -30,6 +30,7 @@ class WindTurbineAnalyzer:
     LOW_POWER_THRESHOLD = 100  # 低功率阈值 (kW)
     LOW_EFFICIENCY_QUANTILE = 0.1  # 低效运行分位数阈值
     POWER_CHANGE_THRESHOLD = 1000  # 功率突变阈值 (kW)
+    WIND_SPEED_EPSILON = 1  # 风速计算中的小量，避免除零
     
     def __init__(self, data_dir='.'):
         self.data_dir = data_dir
@@ -171,9 +172,9 @@ class WindTurbineAnalyzer:
                     turbine_anomalies['异常停机'] = anomaly_times[:10]  # 仅记录前10个
                 
                 # 检测低效运行（功率系数异常低）
-                # 理论功率系数 = 实际功率 / (0.5 * 空气密度 * 扫风面积 * 风速^3)
+                # 效率指标 = 功率 / (风速² + ε)，其中ε避免除零
                 # 简化判断：在相同风速下，功率明显偏低
-                df['效率指标'] = df[power_col] / (df[wind_speed_col] ** 2 + 1)
+                df['效率指标'] = df[power_col] / (df[wind_speed_col] ** 2 + self.WIND_SPEED_EPSILON)
                 efficiency_threshold = df['效率指标'].quantile(self.LOW_EFFICIENCY_QUANTILE)
                 low_efficiency = df['效率指标'] < efficiency_threshold
                 
